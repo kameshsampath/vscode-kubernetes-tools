@@ -173,6 +173,7 @@ export async function activate(context): Promise<extensionapi.ExtensionAPI> {
 
         //Commands - Istio
         registerCommand('extension.istioVersion', istioVersion),
+        registerCommand('extension.istioKubeInject', istioKubeInject.bind(this, "apply", "Injecting Sidecar ...")),
 
         // Draft debug configuration provider
         vscode.debug.registerDebugConfigurationProvider('draft', draftDebugProvider),
@@ -497,6 +498,8 @@ function maybeRunKubernetesCommandForActiveWindow(command, progressMessage) {
     let namespace = vscode.workspace.getConfiguration('vs-kubernetes')['vs-kubernetes.namespace'];
     if (namespace) {
         command = command + ' --namespace ' + namespace + ' ';
+    } else {
+        kubectlUtils.currentNamespace(kubectl);
     }
 
     const isKubernetesSyntax = (editor.document.languageId === 'json' || editor.document.languageId === 'yaml');
@@ -553,6 +556,7 @@ function kubectlViaTempFile(command, fileContent, progressMessage, handler?) {
     console.log(tmpobj.name);
     kubectl.invokeWithProgress(`${command} -f ${tmpobj.name}`, progressMessage, handler);
 }
+
 
 /**
  * Gets the text content (in the case of unsaved or selections), or the filename
@@ -798,6 +802,89 @@ function runKubernetes() {
 //Start of Istio Functions
 function istioVersion() {
     istioctl.invokeInSharedTerminal(`version`);
+}
+
+function istioCtlViaTempFile(command, fileContent, progressMessage, handler?) {
+    const tmpobj = tmp.fileSync();
+    const tempFileName = tmpobj.name + ".yaml";
+    const tempFileName2 = tmpobj.name + "-injected.yaml";
+    fs.writeFileSync(tempFileName, fileContent);
+    console.log(tempFileName);
+    istioctl.invoke(`kube-inject -f ${tempFileName} -o ${tempFileName2}`);
+    kubectl.invokeWithProgress(`${command} -f ${tempFileName2}`, progressMessage, handler);
+    kubectl.invokeInSharedTerminal(`get pods -w`);
+}
+
+function istioTempFile(orignalFile: any): any {
+    const tmpobj = tmp.fileSync();
+    const tempFileName = tmpobj.name + "-injected.yaml";
+    console.log(tempFileName);
+    istioctl.invoke(`kube-inject -f ${orignalFile} -o ${tempFileName}`);
+    return tempFileName;
+}
+
+function istioKubeInject(command: string, progressMessage: string) {
+
+    let text;
+
+    let editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showErrorMessage('This command operates on the open document. Open your Kubernetes resource file, and try again.');
+        return false; // No open text editor
+    }
+
+    kubectlUtils.currentNamespace(kubectl);
+
+    const isKubernetesSyntax = editor.document.languageId === 'yaml';
+    const resultHandler = isKubernetesSyntax ? undefined /* default handling */ :
+        (code, stdout, stderr) => {
+            if (code === 0) {
+                vscode.window.showInformationMessage(stdout);
+            } else {
+                vscode.window.showErrorMessage(`Kubectl command failed. The open document might not be a valid Kubernetes resource.  Details: ${stderr}`);
+            }
+        };
+
+    if (editor.selection) {
+        text = editor.document.getText(editor.selection);
+        if (text.length > 0) {
+            istioCtlViaTempFile(command, text, progressMessage, resultHandler);
+            return true;
+        }
+    }
+
+    if (editor.document.isUntitled) {
+        text = editor.document.getText();
+        if (text.length > 0) {
+            istioCtlViaTempFile(command, text, progressMessage, resultHandler);
+            return true;
+        }
+        return false;
+    }
+
+    if (editor.document.isDirty) {
+        // TODO: I18n this?
+        const confirm = "Save";
+        const promise = vscode.window.showWarningMessage("You have unsaved changes!", confirm);
+        promise.then((value) => {
+            if (value && value === confirm) {
+                editor.document.save().then((ok) => {
+                    if (!ok) {
+                        vscode.window.showErrorMessage("Save failed.");
+                        return;
+                    }
+                    const tempFileName = istioTempFile(editor.document.fileName);
+                    kubectl.invokeWithProgress(`${command} -f "${tempFileName}"`, progressMessage, resultHandler);
+                });
+            }
+        });
+    } else {
+        const tempFileName = istioTempFile(editor.document.fileName);
+        const fullCommand = `${command} -f "${tempFileName}"`;
+        console.log(fullCommand);
+        kubectl.invokeWithProgress(fullCommand, progressMessage, resultHandler);
+    }
+
 }
 //End of Istio Functions
 

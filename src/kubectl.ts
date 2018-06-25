@@ -107,6 +107,10 @@ class IstioctlImpl extends KubectlImpl {
     constructor(host: Host, fs: FS, shell: Shell, installDependenciesCallback: () => void, binFound: boolean, binPath?: string) {
         super(host, fs, shell, installDependenciesCallback, binFound, 'istioctl');
     }
+
+    checkPresent(errorMessageMode: CheckPresentMessageMode): Promise<boolean> {
+        return checkPresent(this.context, errorMessageMode);
+    }
 }
 
 export function create(host: Host, fs: FS, shell: Shell, installDependenciesCallback: () => void): Kubectl {

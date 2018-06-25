@@ -61,6 +61,7 @@
         "onCommand:extension.draftCreate",
         "onCommand:extension.draftUp",
         "onCommand:extension.istioVersion",
+        "onCommand:extension.istioKubeInject",
         "onView:extension.vsKubernetesExplorer",
         "onLanguage:helm",
         "onLanguage:yaml",
@@ -650,6 +651,11 @@
                 "command": "extension.istioVersion",
                 "title": "Show Istio Version",
                 "description": "Show Istio Version",
+                "category": "Istio"
+            },
+            {
+                "command": "extension.istioKubeInject",
+                "title": "Istio Kube Inject",
                 "category": "Istio"
             }
         ],
