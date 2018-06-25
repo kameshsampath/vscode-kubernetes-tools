@@ -20,6 +20,7 @@ export const allKinds = {
     configMap: new ResourceKind("ConfigMap", "ConfigMaps", "configmap"),
     secret: new ResourceKind("Secret", "Secrets", "secret"),
     ingress: new ResourceKind("Ingress", "Ingress", "ingress"),
+    container: new ResourceKind("Container", "Containers", "container")
 };
 
 export const commonKinds = [
@@ -27,6 +28,7 @@ export const commonKinds = [
     allKinds.job,
     allKinds.pod,
     allKinds.service,
+    allKinds.container
 ];
 
 export const scaleableKinds = [

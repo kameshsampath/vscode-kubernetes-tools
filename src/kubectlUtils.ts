@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { Kubectl } from "./kubectl";
 import { kubeChannel } from "./kubeChannel";
 import { sleep } from "./sleep";
-import { ObjectMeta, KubernetesCollection, DataResource, Namespace, Pod, KubernetesResource } from './kuberesources.objectmodel';
+import { ObjectMeta, KubernetesCollection, DataResource, Namespace, Pod, KubernetesResource, Container } from './kuberesources.objectmodel';
 import { failed } from "./errorable";
 
 export interface Cluster {
@@ -178,6 +178,7 @@ export async function getPods(kubectl: Kubectl, selector: any): Promise<PodInfo[
         vscode.window.showErrorMessage(pods.error[0]);
         return [];
     }
+
     return pods.result.items.map((item) => {
         return {
             name: item.metadata.name
@@ -227,9 +228,9 @@ export async function switchNamespace(kubectl: Kubectl, namespace: string): Prom
  */
 export async function runAsDeployment(kubectl: Kubectl, deploymentName: string, image: string, exposedPorts: number[], env: any): Promise<string> {
     let imageName = image.split(":")[0];
-    let imagePrefix = imageName.substring(0, imageName.lastIndexOf("/")+1);
+    let imagePrefix = imageName.substring(0, imageName.lastIndexOf("/") + 1);
     if (!deploymentName) {
-        let baseName = imageName.substring(imageName.lastIndexOf("/")+1);
+        let baseName = imageName.substring(imageName.lastIndexOf("/") + 1);
         const deploymentName = `${baseName}-${Date.now()}`;
     }
     let runCmd = [

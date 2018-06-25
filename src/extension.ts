@@ -28,7 +28,7 @@ import * as kuberesources from './kuberesources';
 import * as docker from './docker';
 import { kubeChannel } from './kubeChannel';
 import * as kubeconfig from './kubeconfig';
-import { create as kubectlCreate, Kubectl } from './kubectl';
+import { create as kubectlCreate, createIstio as istioctlCreate, Kubectl } from './kubectl';
 import * as kubectlUtils from './kubectlUtils';
 import * as explorer from './explorer';
 import { create as draftCreate, Draft, CheckPresentMode as DraftCheckPresentMode } from './draft/draft';
@@ -42,8 +42,8 @@ import { HelmTemplateCompletionProvider } from './helm.completionProvider';
 import { Reporter } from './telemetry';
 import * as telemetry from './telemetry-helper';
 import * as extensionapi from './extension.api';
-import {dashboardKubernetes} from './components/kubectl/dashboard';
-import {portForwardKubernetes} from './components/kubectl/port-forward';
+import { dashboardKubernetes } from './components/kubectl/dashboard';
+import { portForwardKubernetes } from './components/kubectl/port-forward';
 import { Errorable, failed } from './errorable';
 import { Git } from './components/git/git';
 import { DebugSession } from './debug/debugSession';
@@ -63,6 +63,7 @@ let explainActive = false;
 let swaggerSpecPromise = null;
 
 const kubectl = kubectlCreate(host, fs, shell, installDependencies);
+const istioctl = istioctlCreate(host, fs, shell, installDependencies);
 const draft = draftCreate(host, fs, shell, installDependencies);
 const configureFromClusterUI = configureFromCluster.uiProvider();
 const createClusterUI = createCluster.uiProvider();
@@ -93,7 +94,7 @@ export const deleteMessageItems: vscode.MessageItem[] = [
 // Filters for different Helm file types.
 // TODO: Consistently apply these to the providers registered.
 export const HELM_MODE: vscode.DocumentFilter = { language: "helm", scheme: "file" };
-export const HELM_REQ_MODE: vscode.DocumentFilter = { language: "helm", scheme: "file", pattern: "**/requirements.yaml"};
+export const HELM_REQ_MODE: vscode.DocumentFilter = { language: "helm", scheme: "file", pattern: "**/requirements.yaml" };
 export const HELM_CHART_MODE: vscode.DocumentFilter = { language: "helm", scheme: "file", pattern: "**/Chart.yaml" };
 export const HELM_TPL_MODE: vscode.DocumentFilter = { language: "helm", scheme: "file", pattern: "**/templates/*.*" };
 
@@ -101,6 +102,7 @@ export const HELM_TPL_MODE: vscode.DocumentFilter = { language: "helm", scheme: 
 // your extension is activated the very first time the command is executed
 export async function activate(context): Promise<extensionapi.ExtensionAPI> {
     kubectl.checkPresent('activation');
+    istioctl.checkPresent('activation');
 
     const treeProvider = explorer.create(kubectl, host);
     const resourceDocProvider = new KubernetesResourceVirtualFileSystemProvider(kubectl, host, vscode.workspace.rootPath);
@@ -109,7 +111,7 @@ export async function activate(context): Promise<extensionapi.ExtensionAPI> {
     const completionProvider = new HelmTemplateCompletionProvider();
     const completionFilter = [
         "helm",
-        {pattern: "**/templates/NOTES.txt"}
+        { pattern: "**/templates/NOTES.txt" }
     ];
 
     const draftDebugProvider = new DraftConfigurationProvider();
@@ -128,7 +130,7 @@ export async function activate(context): Promise<extensionapi.ExtensionAPI> {
         registerCommand('extension.vsKubernetesGet', getKubernetes),
         registerCommand('extension.vsKubernetesRun', runKubernetes),
         registerCommand('extension.vsKubernetesShowLogs', logsKubernetes),
-        registerCommand('extension.vsKubernetesFollowLogs', (explorerNode: explorer.ResourceNode) => {logsKubernetes(explorerNode, true);}),
+        registerCommand('extension.vsKubernetesFollowLogs', (explorerNode: explorer.ResourceNode) => { logsKubernetes(explorerNode, true); }),
         registerCommand('extension.vsKubernetesExpose', exposeKubernetes),
         registerCommand('extension.vsKubernetesDescribe', describeKubernetes),
         registerCommand('extension.vsKubernetesSync', syncKubernetes),
@@ -168,6 +170,9 @@ export async function activate(context): Promise<extensionapi.ExtensionAPI> {
         registerCommand('extension.draftVersion', execDraftVersion),
         registerCommand('extension.draftCreate', execDraftCreate),
         registerCommand('extension.draftUp', execDraftUp),
+
+        //Commands - Istio
+        registerCommand('extension.istioVersion', istioVersion),
 
         // Draft debug configuration provider
         vscode.debug.registerDebugConfigurationProvider('draft', draftDebugProvider),
@@ -267,7 +272,7 @@ export async function activate(context): Promise<extensionapi.ExtensionAPI> {
     });
 
 
-    vscode.debug.onDidChangeActiveDebugSession((e: vscode.DebugSession)=> {
+    vscode.debug.onDidChangeActiveDebugSession((e: vscode.DebugSession) => {
         if (e != undefined) {
             // keep a copy of the initial Draft debug session
             if (e.name.indexOf('Draft') >= 0) {
@@ -497,7 +502,7 @@ function maybeRunKubernetesCommandForActiveWindow(command, progressMessage) {
     const isKubernetesSyntax = (editor.document.languageId === 'json' || editor.document.languageId === 'yaml');
     const resultHandler = isKubernetesSyntax ? undefined /* default handling */ :
         (code, stdout, stderr) => {
-            if (code === 0 ) {
+            if (code === 0) {
                 vscode.window.showInformationMessage(stdout);
             } else {
                 vscode.window.showErrorMessage(`Kubectl command failed. The open document might not be a valid Kubernetes resource.  Details: ${stderr}`);
@@ -638,7 +643,7 @@ function loadKubernetesCore(value: string) {
 }
 
 function exposeKubernetes() {
-    let kindName = findKindNameOrPrompt(kuberesources.exposableKinds, 'expose', { nameOptional: false}, (kindName: string) => {
+    let kindName = findKindNameOrPrompt(kuberesources.exposableKinds, 'expose', { nameOptional: false }, (kindName: string) => {
         if (!kindName) {
             vscode.window.showErrorMessage('couldn\'t find a relevant type to expose.');
             return;
@@ -680,7 +685,7 @@ function findVersionInternal(fn) {
         return;
     }
 
-    shell.execCore('git describe --always --dirty', shell.execOpts()).then(({code, stdout, stderr}) => {
+    shell.execCore('git describe --always --dirty', shell.execOpts()).then(({ code, stdout, stderr }) => {
         if (code !== 0) {
             vscode.window.showErrorMessage('git log returned: ' + code);
             console.log(stderr);
@@ -789,6 +794,12 @@ function runKubernetes() {
         kubectl.invokeWithProgress(`run ${name} --image=${image}`, "Creating a Deployment...");
     });
 }
+
+//Start of Istio Functions
+function istioVersion() {
+    istioctl.invokeInSharedTerminal(`version`);
+}
+//End of Istio Functions
 
 function diagnosePushError(exitCode: number, error: string): string {
     if (error.includes("denied")) {
@@ -974,7 +985,7 @@ function findPod(callback: (pod: PodSummary) => void) {
 
     quickPickKindName(
         [kuberesources.allKinds.pod],
-        {nameOptional: false},
+        { nameOptional: false },
         (pod) => {
             callback({
                 name: pod.split('/')[1],
@@ -1034,11 +1045,13 @@ async function selectPod(scope: PodSelectionScope, fallback: PodSelectionFallbac
         return podList[0];
     }
 
-    const pickItems = podList.map((element) => { return {
-        label: `${element.metadata.namespace}/${element.metadata.name}`,
-        description: '',
-        pod: element
-    };});
+    const pickItems = podList.map((element) => {
+        return {
+            label: `${element.metadata.namespace}/${element.metadata.name}`,
+            description: '',
+            pod: element
+        };
+    });
 
     const value = await vscode.window.showQuickPick(pickItems);
 
@@ -1057,7 +1070,7 @@ async function logsKubernetes(explorerNode?: explorer.ResourceNode, follow?: boo
             getLogsForContainer(podSummary.name, podSummary.namespace, container.name, follow);
         }
     } else {
-        findPod((pod: PodSummary) => {getLogsForPod(pod, follow);});
+        findPod((pod: PodSummary) => { getLogsForPod(pod, follow); });
     }
 }
 
@@ -1146,12 +1159,14 @@ async function selectContainerForPod(pod: PodSummary): Promise<Container | null>
         return containers[0];
     }
 
-    const pickItems = containers.map((element) => { return {
-        label: element.name,
-        description: '',
-        detail: element.image,
-        container: element
-    };});
+    const pickItems = containers.map((element) => {
+        return {
+            label: element.name,
+            description: '',
+            detail: element.image,
+            container: element
+        };
+    });
 
     const value = await vscode.window.showQuickPick(pickItems, { placeHolder: "Select container" });
 
@@ -1223,7 +1238,7 @@ function execTerminalOnContainer(podName: string, podNamespace: string | undefin
         terminalExecCmd.push('--container', containerName);
     }
     terminalExecCmd.push('--', terminalCmd);
-    const terminalName = `${terminalCmd} on ${podName}` + (containerName ? `/${containerName}`: '');
+    const terminalName = `${terminalCmd} on ${podName}` + (containerName ? `/${containerName}` : '');
     kubectl.runAsTerminal(terminalExecCmd, terminalName);
 }
 
@@ -1443,7 +1458,8 @@ const _debugInternal = (name, image) => {
     // TODO: make this smarter.
     vscode.window.showInputBox({
         prompt: 'Debug command for your container:',
-        placeHolder: 'Example: node debug server.js' }
+        placeHolder: 'Example: node debug server.js'
+    }
     ).then((cmd) => {
         if (!cmd) {
             return;
@@ -1684,7 +1700,7 @@ async function execDraftCreate() {
         return;
     }
     const proposedAppName = path.basename(vscode.workspace.rootPath);
-    const appName = await vscode.window.showInputBox({ value: proposedAppName, prompt: "Choose a name for the Helm release"});
+    const appName = await vscode.window.showInputBox({ value: proposedAppName, prompt: "Choose a name for the Helm release" });
     if (appName) {
         await execDraftCreateApp(appName, undefined);
     }

@@ -6,7 +6,7 @@ import { Kubectl } from './kubectl';
 import * as kubectlUtils from './kubectlUtils';
 import { Host } from './host';
 import * as kuberesources from './kuberesources';
-import { failed } from './errorable';
+import { failed, succeeded } from './errorable';
 
 export function create(kubectl: Kubectl, host: Host): KubernetesExplorer {
     return new KubernetesExplorer(kubectl, host);
@@ -131,7 +131,7 @@ class KubernetesWorkloadFolder extends KubernetesFolder {
         return [
             new KubernetesDeploymentFolder(),
             new KubernetesResourceFolder(kuberesources.allKinds.job),
-            new KubernetesResourceFolder(kuberesources.allKinds.pod)
+            new KubernetesPodsFolder()
         ];
     }
 }
@@ -234,6 +234,28 @@ class KubernetesServiceFolder extends KubernetesResourceFolder {
     }
 }
 
+class KubernetesPodsFolder extends KubernetesResourceFolder {
+    constructor() {
+        super(kuberesources.allKinds.pod);
+    }
+
+    async getChildren(kubectl: Kubectl, host: Host): Promise<KubernetesObject[]> {
+        const pods = await kubectlUtils.getPodSelector('pod', kubectl);
+
+        return Promise.all(pods.map(async (pod): Promise<KubernetesResource> => {
+            const query = " get pods " + pod.name + " -o=jsonpath='{ range .spec.containers[*]}{\"\\n\"}{.name}{ end }'";
+            const lines = await kubectl.asLines(query);
+            if (failed(lines)) {
+                host.showErrorMessage(lines.error[0]);
+                return null;
+            }
+            let containers: KubernetesContainerObject[] = [];
+            lines.result.map((line) => containers.push(new KubernetesContainerObject(line, 'container', pod.name)));
+            return new KubernetesContainerResource(kuberesources.allKinds.pod, pod.name, containers);
+        }));
+    }
+}
+
 class KubernetesDeploymentFolder extends KubernetesResourceFolder {
     constructor() {
         super(kuberesources.allKinds.deployment);
@@ -242,6 +264,32 @@ class KubernetesDeploymentFolder extends KubernetesResourceFolder {
     async getChildren(kubectl: Kubectl, host: Host): Promise<KubernetesObject[]> {
         const deployments = await kubectlUtils.getDeployments(kubectl);
         return deployments.map((dp) => new KubernetesSelectorResource(this.kind, dp.name, dp, dp.selector));
+    }
+}
+
+class KubernetesContainerResource extends KubernetesResource {
+    readonly selector?: string;
+
+    readonly containers: KubernetesContainerObject[] = [];
+
+    constructor(readonly kind: kuberesources.ResourceKind, readonly id: string,
+        readonly pContainers: KubernetesContainerObject[], readonly metadata?: any, readonly nameSelector?: any) {
+        super(kind, id, metadata);
+        this.selector = nameSelector;
+        this.containers = pContainers;
+    }
+
+    async getTreeItem(): Promise<vscode.TreeItem> {
+        const treeItem = await super.getTreeItem();
+        treeItem.collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
+        if (this.containers && this.containers.length >= 2) {
+            treeItem.iconPath = vscode.Uri.file(path.join(__dirname, "../../images/istio-logo.png"));
+        }
+        return treeItem;
+    }
+
+    async getChildren(kubectl: Kubectl, host: Host): Promise<KubernetesObject[]> {
+        return this.containers;
     }
 }
 
@@ -315,6 +363,21 @@ export class KubernetesFileObject implements KubernetesObject {
         return treeItem;
     }
 
+    getChildren(kubectl: Kubectl, host: Host): vscode.ProviderResult<KubernetesObject[]> {
+        return [];
+    }
+}
+
+class KubernetesContainerObject implements KubernetesObject {
+    constructor(readonly id: string, readonly resource: string, readonly parentName: string) {
+
+    }
+
+    getTreeItem(): vscode.TreeItem | Thenable<vscode.TreeItem> {
+        let treeItem = new vscode.TreeItem(this.id, vscode.TreeItemCollapsibleState.None);
+        treeItem.command = null;
+        return treeItem;
+    }
     getChildren(kubectl: Kubectl, host: Host): vscode.ProviderResult<KubernetesObject[]> {
         return [];
     }
