@@ -263,7 +263,43 @@ class KubernetesDeploymentFolder extends KubernetesResourceFolder {
 
     async getChildren(kubectl: Kubectl, host: Host): Promise<KubernetesObject[]> {
         const deployments = await kubectlUtils.getDeployments(kubectl);
-        return deployments.map((dp) => new KubernetesSelectorResource(this.kind, dp.name, dp, dp.selector));
+        return Promise.all(deployments.map(async (dp): Promise<KubernetesSelectorResource> => {
+            const query = " get deployments " + dp.name + " -o=jsonpath='{ range .spec.template.spec.containers[*]}{\"\\n\"}{.name}{ end }'";
+            const lines = await kubectl.asLines(query);
+            if (failed(lines)) {
+                host.showErrorMessage(lines.error[0]);
+                return null;
+            }
+            let treeDecoration;
+            if (lines.result.indexOf('istio-proxy') != -1) {
+                treeDecoration = { iconPath: vscode.Uri.file(path.join(__dirname, "../../images/istio-logo.png")) };
+            }
+            return new KubernetesSelectorResource(this.kind, dp.name, dp, dp.selector, treeDecoration);
+        }));
+    }
+}
+
+class KubernetesSelectorResource extends KubernetesResource {
+    readonly selector?: any;
+    readonly decoration?: any;
+    constructor(readonly kind: kuberesources.ResourceKind, readonly id: string, readonly metadata?: any, readonly labelSelector?: any, readonly treeDecoration?: any) {
+        super(kind, id, metadata);
+        this.selector = labelSelector;
+        this.decoration = treeDecoration;
+    }
+
+    async getTreeItem(): Promise<vscode.TreeItem> {
+        const treeItem = await super.getTreeItem();
+        treeItem.collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
+        if (this.decoration) {
+            treeItem.iconPath = this.decoration.iconPath;
+        }
+        return treeItem;
+    }
+
+    async getChildren(kubectl: Kubectl, host: Host): Promise<KubernetesObject[]> {
+        const pods = await kubectlUtils.getPods(kubectl, this.selector);
+        return pods.map((p) => new KubernetesResource(kuberesources.allKinds.pod, p.name, p));
     }
 }
 
@@ -283,32 +319,16 @@ class KubernetesContainerResource extends KubernetesResource {
         const treeItem = await super.getTreeItem();
         treeItem.collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
         if (this.containers && this.containers.length >= 2) {
-            treeItem.iconPath = vscode.Uri.file(path.join(__dirname, "../../images/istio-logo.png"));
+            const hasIstioProxy = this.containers.filter((item, index, arrray) => item.id === 'istio-proxy').length == 1;
+            if (hasIstioProxy) {
+                treeItem.iconPath = vscode.Uri.file(path.join(__dirname, "../../images/istio-logo.png"));
+            }
         }
         return treeItem;
     }
 
     async getChildren(kubectl: Kubectl, host: Host): Promise<KubernetesObject[]> {
         return this.containers;
-    }
-}
-
-class KubernetesSelectorResource extends KubernetesResource {
-    readonly selector?: any;
-    constructor(readonly kind: kuberesources.ResourceKind, readonly id: string, readonly metadata?: any, readonly labelSelector?: any) {
-        super(kind, id, metadata);
-        this.selector = labelSelector;
-    }
-
-    async getTreeItem(): Promise<vscode.TreeItem> {
-        const treeItem = await super.getTreeItem();
-        treeItem.collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
-        return treeItem;
-    }
-
-    async getChildren(kubectl: Kubectl, host: Host): Promise<KubernetesObject[]> {
-        const pods = await kubectlUtils.getPods(kubectl, this.selector);
-        return pods.map((p) => new KubernetesResource(kuberesources.allKinds.pod, p.name, p));
     }
 }
 

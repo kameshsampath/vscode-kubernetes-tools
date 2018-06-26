@@ -849,7 +849,7 @@ function istioTempFile(orignalFile: any): any {
     return tempFileName;
 }
 
-function istioKubeInject(command: string, progressMessage: string) {
+async function istioKubeInject(command: string, progressMessage: string) {
 
     let text;
 
@@ -859,7 +859,11 @@ function istioKubeInject(command: string, progressMessage: string) {
         return false; // No open text editor
     }
 
-    kubectlUtils.currentNamespace(kubectl);
+    const currentNS = await kubectlUtils.currentNamespace(kubectl);
+
+    if (currentNS) {
+        command = `${command} --namespace ${currentNS}`;
+    }
 
     const isKubernetesSyntax = editor.document.languageId === 'yaml';
     const resultHandler = isKubernetesSyntax ? undefined /* default handling */ :
