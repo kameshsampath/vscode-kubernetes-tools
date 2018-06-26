@@ -116,6 +116,18 @@
                         "vs-kubernetes.dockerPushEnabled": {
                             "type": "boolean",
                             "description": "Whether to push the image after docker build"
+                        },
+                        "vs-kubernetes.dockerHost": {
+                            "type": "string",
+                            "description": "URL to connect to Docker Daemon i.e DOCKER_HOST"
+                        },
+                        "vs-kubernetes.dockerCertPath": {
+                            "type": "string",
+                            "description": "The Docker certificates path i.e. DOCKER_CERT_PATH"
+                        },
+                        "vs-kubernetes.dockerTlsVerify": {
+                            "type": "string",
+                            "description": "The Docker TLS Verify i.e. DOCKER_TLS_VERIFY"
                         }
                     },
                     "default": {
@@ -127,7 +139,10 @@
                         "vs-kubernetes.outputFormat": "yaml",
                         "vs-kubernetes.kubeconfig": "",
                         "vs-kubernetes.autoCleanupOnDebugTerminate": false,
-                        "vs-kubernetes.dockerPushEnabled": false
+                        "vs-kubernetes.dockerPushEnabled": false,
+                        "vs-kubernetes.dockerHost": "",
+                        "vs-kubernetes.dockerCertPath": "",
+                        "vs-kubernetes.dockerTlsVerify": ""
                     }
                 },
                 "vsdocker.imageUser": {

@@ -544,9 +544,25 @@ function maybeRunKubernetesCommandForActiveWindow(command, progressMessage) {
             }
         });
     } else {
-        const fullCommand = `${command} -f "${editor.document.fileName}"`;
-        console.log(fullCommand);
-        kubectl.invokeWithProgress(fullCommand, progressMessage, resultHandler);
+        const orignalFileName = editor.document.fileName;
+        const fileExists = fs.existsSync(orignalFileName);
+        if (fileExists) {
+            const tempFileName = istioTempFile(orignalFileName);
+            if (tempFileName) {
+                const fullCommand = `${command} -f "${tempFileName}"`;
+                console.log(fullCommand);
+                kubectl.invokeWithProgress(fullCommand, progressMessage, resultHandler);
+            }
+        } else {
+            //this case is for all temporary documents that are loaded via `load` commands\
+            //since they dont have fixed file Uri, we grab the content and create them via temp files
+            text = editor.document.getText();
+            if (text.length > 0) {
+                kubectlViaTempFile(command, text, progressMessage, resultHandler);
+                return true;
+            }
+            return false;
+        }
     }
     return true;
 }
@@ -807,20 +823,29 @@ function istioVersion() {
 
 function istioCtlViaTempFile(command, fileContent, progressMessage, handler?) {
     const tmpobj = tmp.fileSync();
-    const tempFileName = tmpobj.name + ".yaml";
-    const tempFileName2 = tmpobj.name + "-injected.yaml";
-    fs.writeFileSync(tempFileName, fileContent);
-    console.log(tempFileName);
-    istioctl.invoke(`kube-inject -f ${tempFileName} -o ${tempFileName2}`);
-    kubectl.invokeWithProgress(`${command} -f ${tempFileName2}`, progressMessage, handler);
-    kubectl.invokeInSharedTerminal(`get pods -w`);
+    console.log("Temp File:" + tmpobj.name);
+    fs.writeFileSync(tmpobj.name, fileContent);
+    const istioTmpObj = tmp.fileSync();
+    console.log("Istio Tmp Obj File:" + istioTmpObj.name);
+    istioctl.invokeWithProgress(`kube-inject -f ${tmpobj.name} -o ${istioTmpObj.name}`
+        , "Injecting Istio Sidecars ..", (code, stdout, stderr) => {
+            if (code === 0) {
+                kubectl.invoke(`${command} -f ${istioTmpObj.name}`);
+                kubectl.invokeInSharedTerminal(`get pods -w`);
+            }
+        });
 }
 
 function istioTempFile(orignalFile: any): any {
     const tmpobj = tmp.fileSync();
     const tempFileName = tmpobj.name + "-injected.yaml";
     console.log(tempFileName);
-    istioctl.invoke(`kube-inject -f ${orignalFile} -o ${tempFileName}`);
+    istioctl.invoke(`kube-inject -f ${orignalFile} -o ${tempFileName}`, (code, stdout, stderr) => {
+        if (!stderr && code !== 0) {
+            host.showErrorMessage(stderr);
+            return null;
+        }
+    });
     return tempFileName;
 }
 
@@ -880,10 +905,28 @@ function istioKubeInject(command: string, progressMessage: string) {
             }
         });
     } else {
-        const tempFileName = istioTempFile(editor.document.fileName);
-        const fullCommand = `${command} -f "${tempFileName}"`;
-        console.log(fullCommand);
-        kubectl.invokeWithProgress(fullCommand, progressMessage, resultHandler);
+        const orignalFileName = editor.document.fileName;
+        const fileExists = fs.existsSync(orignalFileName);
+        if (fileExists) {
+            const tempFileName = istioTempFile(orignalFileName);
+            if (tempFileName) {
+                const fullCommand = `${command} -f "${tempFileName}"`;
+                console.log(fullCommand);
+                kubectl.invokeWithProgress(fullCommand, progressMessage, resultHandler);
+            }
+        } else {
+            // this handling is for text documents that are shown adhoc via `load` commands
+            // all deployments are loaded with text document name `deployment-`
+            const kindObj = tryFindKindNameFromEditor();
+            if (kindObj.kind === 'deployment') {
+                text = editor.document.getText();
+                if (text.length > 0) {
+                    istioCtlViaTempFile(command, text, progressMessage, resultHandler);
+                }
+            } else {
+                host.showInformationMessage("Sidecars injection are not supported for " + kindObj.kind);
+            }
+        }
     }
 
 }
@@ -1452,6 +1495,8 @@ const handleError = (err) => {
     }
 };
 
+//TODO - this has issue when resource files are opened via Kubernetes Explorer
+//since they dont have fixed file Uri
 const diffKubernetes = (callback) => {
     getTextForActiveWindow((data, file) => {
         console.log(data, file);
