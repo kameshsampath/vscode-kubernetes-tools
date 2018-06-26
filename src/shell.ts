@@ -3,6 +3,7 @@
 import * as vscode from 'vscode';
 import * as shelljs from 'shelljs';
 import * as path from 'path';
+import { host } from './host';
 
 export enum Platform {
     Windows,
@@ -21,18 +22,20 @@ export interface Shell {
     execOpts(): any;
     exec(cmd: string, stdin?: string): Promise<ShellResult>;
     execCore(cmd: string, opts: any, stdin?: string): Promise<ShellResult>;
+    autoDockerEnvConfig(env: any);
 }
 
 export const shell: Shell = {
-    isWindows : isWindows,
-    isUnix : isUnix,
-    platform : platform,
-    home : home,
-    combinePath : combinePath,
-    fileUri : fileUri,
-    execOpts : execOpts,
-    exec : exec,
-    execCore : execCore,
+    isWindows: isWindows,
+    isUnix: isUnix,
+    platform: platform,
+    home: home,
+    combinePath: combinePath,
+    fileUri: fileUri,
+    execOpts: execOpts,
+    exec: exec,
+    execCore: execCore,
+    autoDockerEnvConfig: autoDockerEnvConfig
 };
 
 const WINDOWS: string = 'win32';
@@ -86,7 +89,7 @@ function fileUri(filePath: string): vscode.Uri {
 function execOpts(): any {
     let env = process.env;
     if (isWindows()) {
-        env = Object.assign({ }, env, { HOME: home() });
+        env = Object.assign({}, env, { HOME: home() });
     }
     env = shellEnvironment(env);
     const opts = {
@@ -107,7 +110,7 @@ async function exec(cmd: string, stdin?: string): Promise<ShellResult> {
 
 function execCore(cmd: string, opts: any, stdin?: string): Promise<ShellResult> {
     return new Promise<ShellResult>((resolve, reject) => {
-        let proc = shelljs.exec(cmd, opts, (code, stdout, stderr) => resolve({code : code, stdout : stdout, stderr : stderr}));
+        let proc = shelljs.exec(cmd, opts, (code, stdout, stderr) => resolve({ code: code, stdout: stdout, stderr: stderr }));
         if (stdin) {
             proc.stdin.end(stdin);
         }
@@ -122,6 +125,11 @@ export function shellEnvironment(baseEnvironment: any): any {
         if (toolPath) {
             const toolDirectory = path.dirname(toolPath);
             const currentPath = env[pathVariable];
+            if (autoDockerEnvConfig(env)) {
+
+            } else {
+                //TODO configure via extension configuration
+            }
             env[pathVariable] = (currentPath ? `${currentPath}${pathEntrySeparator()}` : '') + toolDirectory;
         }
     }
@@ -132,6 +140,59 @@ export function shellEnvironment(baseEnvironment: any): any {
     }
 
     return env;
+}
+
+//TODO async ?? and better error handling
+export function autoDockerEnvConfig(env: any): boolean {
+    //Auto detect only if DOCKER_HOST and DOCKER_CERT_PATH not defined
+    if (!process.env['DOCKER_HOST'] && !process.env['DOCKER_CERT_PATH']) {
+        let shellResult;
+        let tryMinishift = false;
+
+        //check if minikube or minishift exists
+        if (shelljs.which('minikube')) {
+            shellResult = shelljs.exec("minikube docker-env", { silent: true });
+            if (shellResult.code !== 0 || shellResult.stderr) {
+                tryMinishift = true;
+            }
+        } else {
+            tryMinishift = true;
+        }
+
+        shellResult = null;
+
+        if (tryMinishift) {
+            if (shelljs.which('minishift')) {
+                shellResult = shelljs.exec("minishift docker-env", { silent: true });
+            } else {
+                return false;
+            }
+        }
+
+        if (shellResult.code === 0 && !shellResult.stderr) {
+            const stdout = shellResult.stdout;
+            let lines = stdout.split(/[\r\n]+/);
+            //lines.shift();
+            lines = lines.filter((l) => l.length > 0);
+            const regexp: RegExp = new RegExp(/^export\s*([a-zA-Z0-9_]*)=(.*)$/);
+            lines.map((line) => {
+                let match = regexp.exec(line);
+                if (match && match.length >= 2) {
+                    const varName = match[1];
+                    const varValue = match[2].replace(/"/gi, '');
+                    console.log(varName + "=" + varValue);
+                    process.env[varName] = varValue;
+                } else {
+                    console.log("No match for line :" + line);
+                }
+            });
+        } else {
+            //TODO more efficient
+            console.log("Error Configuring Docker :" + shellResult.stderr);
+            return false;
+        }
+    }
+    return false;
 }
 
 function pathVariableName(env: any): string {

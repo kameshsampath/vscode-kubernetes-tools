@@ -58,6 +58,7 @@ import { DraftConfigurationProvider } from './draft/draftConfigurationProvider';
 import { installHelm, installDraft, installKubectl } from './components/installer/installer';
 import { KubernetesResourceVirtualFileSystemProvider, K8S_RESOURCE_SCHEME } from './kuberesources.virtualfs';
 import { Container, isPod, isKubernetesResource, KubernetesCollection, Pod } from './kuberesources.objectmodel';
+import { appendFile } from 'fs';
 
 let explainActive = false;
 let swaggerSpecPromise = null;
@@ -128,7 +129,7 @@ export async function activate(context): Promise<extensionapi.ExtensionAPI> {
         registerCommand('extension.vsKubernetesExplain', explainActiveWindow),
         registerCommand('extension.vsKubernetesLoad', loadKubernetes),
         registerCommand('extension.vsKubernetesGet', getKubernetes),
-        registerCommand('extension.vsKubernetesRun', runKubernetes),
+        registerCommand('extension.vsKubernetesRun', runKubernetes.bind(this)),
         registerCommand('extension.vsKubernetesShowLogs', logsKubernetes),
         registerCommand('extension.vsKubernetesFollowLogs', (explorerNode: explorer.ResourceNode) => { logsKubernetes(explorerNode, true); }),
         registerCommand('extension.vsKubernetesExpose', exposeKubernetes),
@@ -757,7 +758,7 @@ function _findNameAndImageInternal(fn) {
         vscode.window.showErrorMessage('This command requires an open folder.');
         return;
     }
-    const folderName = path.basename(vscode.workspace.rootPath);
+    let folderName = path.basename(vscode.workspace.rootPath);
     const name = docker.sanitiseTag(folderName);
     findVersion().then((version) => {
         let image = name + ":" + version;
@@ -793,10 +794,10 @@ function invokeScaleKubernetes(kindName: string, replicas: number) {
     kubectl.invokeWithProgress(`scale --replicas=${replicas} ${kindName}`, "Kubernetes Scaling...");
 }
 
-function runKubernetes() {
+function runKubernetes(app) {
     buildPushThenExec((name, image) => {
         kubectl.invokeWithProgress(`run ${name} --image=${image}`, "Creating a Deployment...");
-    });
+    }, app);
 }
 
 //Start of Istio Functions
@@ -900,22 +901,42 @@ function diagnosePushError(exitCode: number, error: string): string {
     return 'Image push failed.';
 }
 
-function buildPushThenExec(fn) {
+function buildPushThenExec(fn, app?: any) {
     findNameAndImage().then((name, image) => {
         vscode.window.withProgress({ location: vscode.ProgressLocation.Window }, async (p) => {
+            shell.autoDockerEnvConfig(process.env);
             p.report({ message: "Docker Building..." });
-            const buildResult = await shell.exec(`docker build -t ${image} .`);
+
+            let dockerBuildCmd = `docker build -t ${image} .`;
+
+            //Derive the image name and tag from app folder selected
+            if (app) {
+                const appPath: string = app.fsPath;
+                name = appPath.substring(appPath.lastIndexOf("/") + 1, appPath.length);
+                const imageUser = image.substring(0, image.indexOf("/"));
+                const imageTag: string = image.substring(image.indexOf(":"));
+                image = `${imageUser}/${name}${imageTag}`;
+                dockerBuildCmd = `docker build -t ${image} ${app.fsPath}`;
+            }
+
+            const buildResult = await shell.exec(dockerBuildCmd);
+            const isPushEnabled: boolean = host.getConfiguration('vs-kubernetes')[`vs-kubernetes.dockerPushEnabled`];
             if (buildResult.code === 0) {
                 vscode.window.showInformationMessage(image + ' built.');
-                p.report({ message: "Docker Pushing..." });
-                const pushResult = await shell.exec('docker push ' + image);
-                if (pushResult.code === 0) {
-                    vscode.window.showInformationMessage(image + ' pushed.');
-                    fn(name, image);
+                if (isPushEnabled) {
+                    p.report({ message: "Docker Pushing..." });
+                    const pushResult = await shell.exec('docker push ' + image);
+                    if (pushResult.code === 0) {
+                        vscode.window.showInformationMessage(image + ' pushed.');
+                        fn(name, image);
+                    } else {
+                        const diagnostic = diagnosePushError(pushResult.code, pushResult.stderr);
+                        vscode.window.showErrorMessage(`${diagnostic} See Output window for docker push error message.`);
+                        kubeChannel.showOutput(pushResult.stderr, 'Docker');
+                    }
                 } else {
-                    const diagnostic = diagnosePushError(pushResult.code, pushResult.stderr);
-                    vscode.window.showErrorMessage(`${diagnostic} See Output window for docker push error message.`);
-                    kubeChannel.showOutput(pushResult.stderr, 'Docker');
+                    vscode.window.showInformationMessage(image + ' not pushed to Docker registry, as Docker Push is disabled.');
+                    fn(name, image);
                 }
             } else {
                 vscode.window.showErrorMessage('Image build failed. See Output window for details.');
@@ -963,7 +984,7 @@ export function findKindNameOrPrompt(resourceKinds: kuberesources.ResourceKind[]
     if (kindObject === null) {
         promptKindName(resourceKinds, descriptionVerb, opts, handler);
     } else {
-        handler(`${kindObject.kind}/${kindObject.resourceName}`);
+        handler(`${kindObject.kind} /${kindObject.resourceName}`);
     }
 }
 
@@ -1658,9 +1679,9 @@ function serviceExists(serviceName, handler) {
     exists('services', serviceName, handler);
 }
 
-function removeDebugKubernetes() {
+function removeDebugKubernetes(app?: any) {
     //eslint-disable-next-line no-unused-vars
-    findNameAndImage().then((name, image) => {
+    findNameAndImage.bind(app).then((name, image) => {
         let deploymentName = name + '-debug';
         deploymentExists(deploymentName, (deployment) => {
             serviceExists(deploymentName, (service) => {

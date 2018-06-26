@@ -112,6 +112,10 @@
                             ],
                             "type": "string",
                             "description": "Output format for Kubernetes specs. One of 'json' or 'yaml' (default)."
+                        },
+                        "vs-kubernetes.dockerPushEnabled": {
+                            "type": "boolean",
+                            "description": "Whether to push the image after docker build"
                         }
                     },
                     "default": {
@@ -122,7 +126,8 @@
                         "vs-kubernetes.istioctl-path": "",
                         "vs-kubernetes.outputFormat": "yaml",
                         "vs-kubernetes.kubeconfig": "",
-                        "vs-kubernetes.autoCleanupOnDebugTerminate": false
+                        "vs-kubernetes.autoCleanupOnDebugTerminate": false,
+                        "vs-kubernetes.dockerPushEnabled": false
                     }
                 },
                 "vsdocker.imageUser": {
@@ -161,6 +166,10 @@
                     "when": "",
                     "command": "extension.helmInspectValues",
                     "group": "2_helm@98"
+                },
+                {
+                    "when": "",
+                    "command": "extension.vsKubernetesRun"
                 }
             ],
             "view/title": [
@@ -448,7 +457,7 @@
             },
             {
                 "command": "extension.vsKubernetesRun",
-                "title": "Run",
+                "title": "Kubernetes Application Deploy",
                 "category": "Kubernetes"
             },
             {
